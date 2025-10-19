@@ -76,10 +76,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't copy video file", err)
 		return
 	}
-	if _, err := tf.Seek(0, io.SeekStart); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't seek video file", err)
+
+	processedFilePath, err := processVideoForFastStart(tf.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
 		return
 	}
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed file", err)
+		return
+	}
+	defer processedFile.Close()
 
 	ratio, err := getVideoAspectRatio(tf.Name())
 	if err != nil {
@@ -96,7 +104,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileKey,
-		Body:        tf,
+		Body:        processedFile,
 		ContentType: &mimeType,
 	})
 	if err != nil {
@@ -144,4 +152,13 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "portrait", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	newFilePath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", newFilePath)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return newFilePath, nil
 }
