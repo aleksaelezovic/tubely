@@ -75,7 +75,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	randStr := base64.RawURLEncoding.EncodeToString(randBytes)
-	filePath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", randStr, fileExtension[0]))
+	filePath := filepath.Join(cfg.assetsRoot, randStr+fileExtension[0])
 	f, err := os.Create(filePath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
