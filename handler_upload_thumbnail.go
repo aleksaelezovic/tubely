@@ -53,6 +53,15 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	contentType := header.Header.Get("Content-Type")
+	mimeType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || len(mimeType) == 0 {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get file MIME type", err)
+		return
+	}
+	if mimeType != "image/jpeg" && mimeType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", err)
+		return
+	}
 	fileExtension, err := mime.ExtensionsByType(contentType)
 	if err != nil || len(fileExtension) == 0 {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get file extension", err)
