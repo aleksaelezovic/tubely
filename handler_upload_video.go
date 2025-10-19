@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -77,16 +81,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ratio, err := getVideoAspectRatio(tf.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
 	randBytes := make([]byte, 32)
 	if _, err = rand.Read(randBytes); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate thumbnail", err)
 		return
 	}
 	randStr := base64.RawURLEncoding.EncodeToString(randBytes)
-	fileName := fmt.Sprintf("%s.mp4", randStr)
+	fileKey := fmt.Sprintf("%s/%s.mp4", ratio, randStr)
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &fileName,
+		Key:         &fileKey,
 		Body:        tf,
 		ContentType: &mimeType,
 	})
@@ -95,7 +104,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileName)
+	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileKey)
 	video.VideoURL = &videoURL
 
 	if err := cfg.db.UpdateVideo(video); err != nil {
@@ -104,4 +113,35 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, map[string]string{"message": "Video uploaded successfully"})
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	buf := bytes.Buffer{}
+	cmd.Stdout = &buf
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	var data struct {
+		Streams []struct {
+			CodecType string  `json:"codec_type"`
+			Width     float64 `json:"width"`
+			Height    float64 `json:"height"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &data); err != nil {
+		return "", err
+	}
+	if len(data.Streams) == 0 {
+		return "", errors.New("no streams found")
+	}
+	ratio := data.Streams[0].Width / data.Streams[0].Height
+	t := 0.01
+	if ratio*9/16 < 1+t && ratio*9/16 > 1-t {
+		return "landscape", nil
+	}
+	if ratio*16/9 < 1+t && ratio*16/9 > 1-t {
+		return "portrait", nil
+	}
+	return "other", nil
 }
